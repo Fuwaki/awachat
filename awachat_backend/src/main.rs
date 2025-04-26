@@ -24,23 +24,25 @@ async fn insert_message(
 ) -> Result<usize, deadpool_sqlite::rusqlite::Error>  {
     let res: Result<usize, deadpool_sqlite::rusqlite::Error> = conn
         .interact(move |conn| {
-            conn.execute(
-                "INSERT INTO chat (name, message, date) VALUES (?, ?, ?)",
-                deadpool_sqlite::rusqlite::params![mp.name, mp.message, mp.date],
-            )
+            let mut stmt = conn
+                .prepare_cached("INSERT INTO chat (name, message, date) VALUES (?, ?, ?)")
+                .unwrap();
+            stmt.execute(deadpool_sqlite::rusqlite::params![mp.name, mp.message, mp.date])
         })
         .await
         .unwrap();
     res
 }
 
-async fn get_all_messages(
+async fn get_messages(
     conn: deadpool::managed::Object<Manager>,
     last_id: i64,
     count: u32,
 ) -> Result<Vec<Message>, ()> {
     let res=conn.interact(move |conn|{
-        let mut stmt=conn.prepare("SELECT id, name, message, date FROM chat WHERE id < ? ORDER BY id DESC LIMIT ?").unwrap();
+        let mut stmt = conn
+            .prepare_cached("SELECT id, name, message, date FROM chat WHERE id < ? ORDER BY id DESC LIMIT ?")
+            .unwrap();
         let message_iter=stmt.query_map(deadpool_sqlite::rusqlite::params![last_id, count], |row| {
             Ok(Message {
                 id: row.get(0).unwrap(),
@@ -54,7 +56,6 @@ async fn get_all_messages(
     }).await.unwrap();
     res
 }
-
 #[tokio::main]
 async fn main() {
     env_logger::builder()
@@ -74,7 +75,7 @@ async fn main() {
             let latest_id: i64 = params.get("latestID").unwrap().parse().unwrap();
             let count: u32 = params.get("count").unwrap().parse().unwrap();
             let conn = pool.get().await.unwrap();
-            match get_all_messages(conn, latest_id, count).await {
+            match get_messages(conn, latest_id, count).await {
                 Ok(messages) => Ok(warp::reply::json(&messages)),
                 Err(_) => Err(warp::reject::not_found()),
             }
